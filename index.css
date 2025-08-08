@@ -1,0 +1,131 @@
+* {
+    padding: 0;
+    margin: 0;
+}
+
+html {
+    height: 100%;
+}
+
+body.portal {
+    text-align: center;
+    margin: 0;
+    height: 100%;
+    font-size: 15px;
+    font-weight: 400;
+    color: #fff;
+
+    background: url("background.png") 0% 0% / cover no-repeat;
+}
+
+.logo-img {
+    padding-top: 10%;
+    width: 100%;
+    height: 35%;
+    z-index: 10;
+    position: relative;
+}
+
+.gradient-bg {
+    background: linear-gradient(135deg, #60A5FA 0%, #3B82F6 50%, #93C5FD 100%);
+}
+
+.glass-effect {
+    backdrop-filter: blur(16px);
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.firebase-section {
+    display: block;
+}
+
+.captive-section {
+    display: none;
+}
+
+/* Logo sizing */
+.logo-image {
+    width: 160px;
+    max-width: 100%;
+    height: auto;
+}
+
+/* Order list container */
+.order-list-container {
+    max-height: 340px;
+}
+
+/* Accessibility improvements */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.focus\:not-sr-only:focus {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: inherit;
+    margin: inherit;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.loading-spinner {
+    animation: spin 1s linear infinite;
+}
+
+/* Focus improvements */
+.focus-ring:focus {
+    outline: 2px solid #3B82F6;
+    outline-offset: 2px;
+}
+
+@media (max-width: 375px) {
+    .small-screen-padding {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }
+
+    .small-screen-card {
+        padding: 1.25rem !important;
+    }
+
+    .small-screen-text {
+        font-size: 0.9rem !important;
+    }
+
+    .small-screen-heading {
+        font-size: 1.5rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+
+    .small-screen-input {
+        padding-top: 0.625rem !important;
+        padding-bottom: 0.625rem !important;
+    }
+
+    .small-screen-mb {
+        margin-bottom: 0.75rem !important;
+    }
+
+    .small-screen-mt {
+        margin-top: 0.75rem !important;
+    }
+}
