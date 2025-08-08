@@ -1,7 +1,7 @@
 // altonaut.js
 // Mock API client for login and sign up
 
-const API_BASE_URL = 'http://localhost:3001'; // Change to your API base URL
+const API_BASE_URL = 'https://quota.altonaut.id'; // Change to your API base URL
 
 /**
  * Login function (real API)
