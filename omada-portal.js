@@ -57,40 +57,91 @@ const Ajax = {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", url, true);
         xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.timeout = 15000;
+        const finish = (statusOk) => {
+            let parsed;
+            let raw = xhr.responseText;
+            try {
+                parsed = typeof raw === 'string' && raw.length ? JSON.parse(raw) : (raw || {});
+            } catch (e) {
+                parsed = { error: 'parse_error', message: 'Non-JSON response', rawText: raw };
+            }
+            callback({
+                ok: statusOk,
+                httpStatus: xhr.status,
+                statusText: xhr.statusText,
+                result: parsed,
+                rawText: raw
+            });
+        };
         xhr.onreadystatechange = () => {
             if (xhr.readyState === 4) {
-                if (xhr.status === 200 || xhr.status === 304) {
-                    callback(JSON.parse(xhr.responseText));
-                } else {
-                    console.error(`Error: ${xhr.status} - ${xhr.statusText}`);
-                }
+                if (xhr.status === 200 || xhr.status === 304) finish(true);
+                else finish(false);
             }
+        };
+        xhr.onerror = () => {
+            callback({ ok: false, httpStatus: xhr.status, statusText: xhr.statusText, result: { error: 'network_error' } });
+        };
+        xhr.ontimeout = () => {
+            callback({ ok: false, httpStatus: xhr.status, statusText: 'Timeout', result: { error: 'timeout' } });
         };
         xhr.send(data);
     }
 };
 
+// Hotspot type labels expected by UI population
+const hotspotMap = {
+    [AUTH_TYPES.VOUCHER_ACCESS_TYPE]: "Voucher Access",
+    [AUTH_TYPES.LOCAL_USER_ACCESS_TYPE]: "Local User Access",
+    [AUTH_TYPES.SMS_ACCESS_TYPE]: "SMS Access",
+    [AUTH_TYPES.RADIUS_ACCESS_TYPE]: "RADIUS Access",
+    [AUTH_TYPES.FORM_AUTH_ACCESS_TYPE]: "Form Auth Access"
+};
+
+// Safe DOM utils to avoid null reference errors in customized templates
+function safeById(id) {
+    return document.getElementById(id) || null;
+}
+function safeShow(id, display = 'block') {
+    const el = safeById(id);
+    if (el && el.style) el.style.display = display;
+}
+function safeHide(id) {
+    const el = safeById(id);
+    if (el && el.style) el.style.display = 'none';
+}
+
 const getQueryStringKey = (key) => getQueryStringAsObject()[key];
 
 const getQueryStringAsObject = () => {
-    const query = decodeURIComponent(window.location.search.substring(1));
     const params = {};
-    const regex = /([^&;=]+)=?([^&;]*)/g;
-    let match;
-
-    while ((match = regex.exec(query)) !== null) {
-        const key = match[1];
-        const value = match[2];
-        if (params[key]) {
-            if (!Array.isArray(params[key])) {
-                params[key] = [params[key]];
+    try {
+        const usp = new URLSearchParams(window.location.search);
+        for (const [k, v] of usp.entries()) {
+            if (params[k]) {
+                if (!Array.isArray(params[k])) params[k] = [params[k]];
+                params[k].push(v);
+            } else {
+                params[k] = v;
             }
-            params[key].push(value);
-        } else {
-            params[key] = value;
         }
+    } catch (_) {
+        // Fallback parser without decoding entire string first
+        const raw = (window.location.search || '').replace(/^\?/, '');
+        raw.split('&').forEach(pair => {
+            if (!pair) return;
+            const [k, v] = pair.split('=');
+            const key = decodeURIComponent(k || '');
+            const val = decodeURIComponent(v || '');
+            if (params[key]) {
+                if (!Array.isArray(params[key])) params[key] = [params[key]];
+                params[key].push(val);
+            } else {
+                params[key] = val;
+            }
+        });
     }
-
     return params;
 };
 
@@ -108,60 +159,100 @@ let globalConfig = {};
 let submitUrl;
 
 const handleAjaxResponse = (response) => {
-    const data = response.result;
+    const data = response?.result || {};
     submitUrl = "/portal/auth";
     const landingUrl = data.landingUrl;
+
     globalConfig = {
-        authType: data.authType,
-        hotspotTypes: data.hotspot?.enabledTypes || [],
+        authType: AUTH_TYPES.VOUCHER_ACCESS_TYPE,
+        hotspotTypes: [AUTH_TYPES.VOUCHER_ACCESS_TYPE],
         buttonText: data.portalCustomize?.buttonText || 'Log In',
         formAuthButtonText: data.portalCustomize?.formAuthButtonText || 'Take the Survey',
         formAuth: data.formAuth || {},
         error: data.error || 'ok',
-        countryCode: `+${data.sms?.countryCode || 1}`
+        countryCode: `+${data.sms?.countryCode || 1}`,
+        landingUrl
     };
 
-    // Update UI based on authType
     configurePage(globalConfig);
 };
 
 const configurePage = (config) => {
-    const authType = config.authType;
-    document.getElementById("oper-hint").style.display = "none";
-    document.getElementById("hotspot-section").style.display = "none";
-    document.getElementById("input-voucher").style.display = "none";
-    document.getElementById("input-user").style.display = "none";
-    document.getElementById("input-password").style.display = "none";
-    document.getElementById("input-simple").style.display = "none";
-    document.getElementById("input-phone-num").style.display = "none";
-    document.getElementById("input-verify-code").style.display = "none";
+    safeHide("oper-hint");
+    safeHide("hotspot-section");
+    safeHide("input-voucher");
+    safeHide("input-user");
+    safeHide("input-password");
+    safeHide("input-simple");
+    safeHide("input-phone-num");
+    safeHide("input-verify-code");
 
-    switch (authType) {
-        case AUTH_TYPES.NO_AUTH:
-            window.authType = AUTH_TYPES.NO_AUTH;
-            break;
-        case AUTH_TYPES.SIMPLE_PASSWORD:
-            document.getElementById("input-simple").style.display = "block";
-            window.authType = AUTH_TYPES.SIMPLE_PASSWORD;
-            break;
-        case AUTH_TYPES.EXTERNAL_RADIUS:
-            hotspotChange(AUTH_TYPES.EXTERNAL_RADIUS);
-            window.authType = AUTH_TYPES.EXTERNAL_RADIUS;
-            break;
-        case AUTH_TYPES.EXTERNAL_LDAP:
-            hotspotChange(AUTH_TYPES.EXTERNAL_LDAP);
-            window.authType = AUTH_TYPES.EXTERNAL_LDAP;
-            break;
-        case AUTH_TYPES.HOTSPOT:
-            document.getElementById("hotspot-section").style.display = "block";
-            const options = config.hotspotTypes.map(type => `<option value="${type}">${hotspotMap[type]}</option>`).join('');
-            document.getElementById("hotspot-selector").innerHTML = options;
-            hotspotChange(config.hotspotTypes[0]);
-            window.authType = config.hotspotTypes[0];
-            break;
-        default:
-            console.warn("Unknown auth type");
+    // Always enforce voucher as selected/only method
+    window.authType = AUTH_TYPES.VOUCHER_ACCESS_TYPE;
+};
+
+// Expose a helper to submit voucher auth to Omada controller
+window.submitVoucherAuth = function submitVoucherAuth(voucherCode, callbacks = {}) {
+    const { onStart, onSuccess, onError, onDone } = callbacks;
+    if (!voucherCode || typeof voucherCode !== 'string') {
+        onError && onError('Invalid voucher code.');
+        return;
     }
+    if (onStart) onStart();
+
+    const payload = JSON.stringify({
+        clientMac,
+        apMac,
+        gatewayMac,
+        ssidName,
+        radioId,
+        vid,
+        originUrl,
+        authType: AUTH_TYPES.VOUCHER_ACCESS_TYPE,
+        voucherCode: voucherCode.trim().slice(0, MAX_INPUT_LEN)
+    });
+
+    Ajax.post(submitUrl || '/portal/auth', payload, (resp) => {
+        try {
+            const httpStatus = resp?.httpStatus;
+            const statusText = resp?.statusText;
+            const result = resp?.result || {};
+            // Omada responses vary; treat 0 or 'ok' as success
+            const code = result.errCode ?? result.errorCode ?? result.code;
+            const primaryMsg = result.error || result.message || result.msg;
+            const msgKey = String(code ?? (primaryMsg === 'ok' ? 0 : -1));
+            const ok = (code === 0) || (primaryMsg === 'ok');
+            if (ok) {
+                onSuccess && onSuccess(result);
+                // Try to redirect if a landing URL is provided
+                const urlFromResult = typeof result.result === 'string' ? result.result : undefined;
+                const url = urlFromResult || result.landingUrl || globalConfig.landingUrl || originUrl;
+                if (url) {
+                    try { window.location.replace(url); } catch (_) { window.location.href = url; }
+                }
+            } else {
+        // Provide concise guidance when voucher auth is misconfigured on the controller
+                const numeric = Number(code);
+                const misconfigCodes = new Set([-41500, -41533, -41538]);
+                const fallback = errorHintMap[msgKey] || primaryMsg || 'Failed to authenticate.';
+                let human = misconfigCodes.has(numeric)
+                    ? 'Voucher authentication failed on the controller. Please verify that Voucher is enabled and configured for this SSID/site.'
+                    : fallback;
+                // Additional environment-specific hints can be added here.
+        onError && onError(human, result);
+                const hint = safeById('oper-hint');
+                if (hint) {
+                    let full = human;
+                    if (code !== undefined) full += ` (code ${code})`;
+                    hint.textContent = full;
+                    hint.style.display = 'block';
+                }
+                
+            }
+        } finally {
+            onDone && onDone();
+        }
+    });
 };
 
 Ajax.post(
