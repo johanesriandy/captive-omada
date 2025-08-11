@@ -109,14 +109,20 @@ function handleSignUp(name, email, password) {
             return null;
         })
         .then((userResult) => {
-            if (!userResult) return;
+            if (!userResult) return; // prior step already handled error UI
             hideLoading();
-            if (userResult.success) showCaptiveSection(userResult.user);
-            else showAuthError(userResult.error || "Could not fetch user info.");
+            if (userResult.success) {
+                showCaptiveSection(userResult.user);
+            } else {
+                // Proceed with login despite user info fetch failure
+                showCaptiveSection({ email });
+                showCaptiveError(userResult.error || 'Could not fetch user info.');
+            }
         })
         .catch((error) => {
             clearTimeout(timer);
             hideLoading();
+            // Network failure on the sign-up request itself still blocks login
             showAuthError("Registration failed. Please try again.");
             if (error?.meta?.errorName === 'TypeError') showAndroidBanner();
         });
@@ -149,10 +155,15 @@ function handleSignIn(email, password) {
             return null;
         })
         .then((userResult) => {
-            if (!userResult) return;
+            if (!userResult) return; // prior step already handled error UI
             hideLoading();
-            if (userResult.success) showCaptiveSection(userResult.user);
-            else showAuthError(userResult.error || "Could not fetch user info.");
+            if (userResult.success) {
+                showCaptiveSection(userResult.user);
+            } else {
+                // Proceed with login despite user info fetch failure
+                showCaptiveSection({ email });
+                showCaptiveError(userResult.error || 'Could not fetch user info.');
+            }
         })
         .catch((error) => {
             clearTimeout(timer);

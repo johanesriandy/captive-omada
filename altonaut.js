@@ -1,12 +1,20 @@
 // altonaut.js
 // API client for login, sign up, and orders
 
-const API_BASE_URL = 'https://ebda63bf67fd.ngrok-free.app';
+const API_BASE_URL = 'https://quota.altonaut.id';
 const CLIENT_OPTS = {
     // Enable robust XHR fallback by default to ensure requests fire in constrained environments
     enableFormFallback: true,
     apiBaseUrlOverride: ''
 };
+
+function buildAuthHeader(token) {
+    const t = (token || '').toString().trim();
+    if (!t) return '';
+    // Avoid double Bearer prefix
+    const lower = t.slice(0, 6).toLowerCase();
+    return lower === 'bearer' ? t : `Bearer ${t}`;
+}
 
 function getQueryParams() {
     const params = {};
@@ -56,19 +64,7 @@ function resolveApiBaseUrl() {
     }
 }
 
-// Fetch with timeout helper
-function fetchWithTimeout(resource, options = {}, timeoutMs = 12000) {
-    if (typeof fetch !== 'function') {
-        try { console.warn('[api] fetch is not available, will use fallback'); } catch (_) {}
-        const err = new TypeError('fetch_unavailable');
-        // Return a rejected promise so callers' catch/fallback paths run
-        return Promise.reject(err);
-    }
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeoutMs);
-    const opts = { ...options, signal: controller.signal };
-    return fetch(resource, opts).finally(() => clearTimeout(id));
-}
+// Removed redundant fetch helper; use native fetch directly
 
 function getTokenFromResult(result) {
     // Support { token }, { data: { token } }, or { data: { token: '...' } }
@@ -129,7 +125,7 @@ function trySimplePost(url, dataObj, timeoutMs = 12000) {
  */
 function login(email, password) {
     const url = `${resolveApiBaseUrl()}/api/auth/login`;
-    return fetchWithTimeout(url, {
+    return fetch(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -172,7 +168,7 @@ function login(email, password) {
  */
 function signUp(name, email, password) {
     const url = `${resolveApiBaseUrl()}/api/auth/signup`;
-    return fetchWithTimeout(url, {
+    return fetch(url, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
@@ -210,23 +206,31 @@ function signUp(name, email, password) {
  */
 function getUser(token) {
     const url = `${resolveApiBaseUrl()}/api/auth/user`;
-    return fetchWithTimeout(url, {
+    return fetch(url, {
         method: 'GET',
+        // Prevent caches and enforce JSON response
+        cache: 'no-store',
         headers: {
-            // Remove Content-Type on GET to reduce preflight; Authorization may still preflight depending on server CORS
-            'Authorization': `Bearer ${token}`
+            'Authorization': buildAuthHeader(token),
+            'Accept': 'application/json'
         }
     })
     .then(async (response) => {
         let result;
         try { result = await response.json(); } catch (_) { result = {}; }
-        if (response.ok) {
-            // Be tolerant to different shapes: {data}, {user}, or full object as user
-            const user = (result && (result.data || result.user)) || result;
-            return { success: true, user, meta: { status: response.status, url } };
-        } else {
+        // Consider 204 No Content or empty payload as failure for getUser
+        if (!response.ok || response.status === 204) {
             return { success: false, error: getErrorFromResult(result, 'Failed to fetch user.'), meta: { status: response.status, url, body: result } };
         }
+
+        // Be tolerant to different shapes: {data}, {user}, or full object as user
+        const user = (result && (result.data || result.user)) || result;
+        const isObject = user && typeof user === 'object' && !Array.isArray(user);
+        const hasFields = isObject && Object.keys(user).length > 0;
+        if (!hasFields) {
+            return { success: false, error: 'No user info returned from server.', meta: { status: response.status, url, body: result } };
+        }
+        return { success: true, user, meta: { status: response.status, url } };
     })
     .catch((e) => ({ success: false, error: e?.name === 'AbortError' ? 'Network timeout.' : 'Network error.', meta: { errorName: e?.name, message: e?.message, url } }));
 }
@@ -251,11 +255,12 @@ function getOrders(token, siteId) {
 
     const siteOrdersUrl = `${base}/api/site-orders?siteId=${encodeURIComponent(effectiveSiteId)}`;
     const commonHeaders = {
-        'Authorization': `Bearer ${token}`
+        'Authorization': buildAuthHeader(token),
+        'Accept': 'application/json'
         // Remove Content-Type on GET to reduce preflight
     };
 
-    return fetchWithTimeout(siteOrdersUrl, { method: 'GET', headers: commonHeaders })
+    return fetch(siteOrdersUrl, { method: 'GET', headers: commonHeaders, cache: 'no-store' })
         .then(async (response) => {
             let result;
             try { result = await response.json(); } catch (_) { result = {}; }
