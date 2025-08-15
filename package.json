@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
   "clean": "rm -rf dist/stage",
-  "build:tailwind": "mkdir -p dist && tailwindcss -c tailwind.config.js -i ./tailwind.input.css -o ./dist/tailwind.min.css --minify",
-  "build:stage": "mkdir -p dist/stage && cp index.html index.css jquery.min.js app.js altonaut.js omada-portal.js altonaut-light1.png dist/stage/ && sed -i '' 's|dist/tailwind.min.css|tailwind.min.css|g' dist/stage/index.html && mkdir -p dist/stage/img && cp -R img/. dist/stage/img/ && cp dist/tailwind.min.css dist/stage/tailwind.min.css",
+  "build:tailwind": "mkdir -p dist && tailwindcss -c tailwind.config.js -i ./src/tailwind.input.css -o ./dist/tailwind.min.css --minify",
+  "build:stage": "mkdir -p dist/stage && cp -R src/. dist/stage/ && sed -i '' 's|dist/tailwind.min.css|tailwind.min.css|g' dist/stage/index.html && cp dist/tailwind.min.css dist/stage/tailwind.min.css",
   "build:zip": "cd dist/stage && zip -r ../portal-$(date -u +%Y-%m-%dT%H-%M-%SZ).zip .",
   "build": "npm run clean && npm run build:tailwind && npm run build:stage && npm run build:zip"
   },
