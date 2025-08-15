@@ -7,11 +7,24 @@ html {
     height: 100%;
     -webkit-text-size-adjust: 100%;
 }
+/* Ensure the viewport paints a dark base under the gradient */
+html, body {
+    background-color: #0F172A;
+    min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    /* Prevent overscroll bounce that can cause layout jumps in WebView */
+    overscroll-behavior-y: contain;
+}
 
 body.portal {
     text-align: center;
     margin: 0;
     height: 100%;
+    min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
     font-size: 15px;
     font-weight: 400;
     color: #fff;
@@ -28,10 +41,37 @@ body.portal {
 }
 
 .gradient-bg {
-    background: linear-gradient(135deg, #60A5FA 0%, #3B82F6 50%, #93C5FD 100%);
+    background: linear-gradient(135deg, #0B1220 0%, #1C2A3A 50%, #0F172A 100%);
     background-repeat: no-repeat;
-    background-attachment: fixed;
+    background-attachment: scroll;
     min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
+}
+.gradient-bg {
+    position: relative;
+    z-index: 0;
+    background: none;
+    background-color: #0F172A;
+    min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
+}
+
+.gradient-bg::before {
+    content: "";
+    position: fixed;
+    top: calc(-1px - env(safe-area-inset-top));
+    left: calc(-1px - env(safe-area-inset-left));
+    right: calc(-1px - env(safe-area-inset-right));
+    bottom: calc(-1px - env(safe-area-inset-bottom));
+    background: linear-gradient(135deg, #0B1220 0%, #1C2A3A 50%, #0F172A 100%);
+    background-repeat: no-repeat;
+    background-size: cover;
+    pointer-events: none;
+    z-index: -1; /* behind content within the stacking context */
+    will-change: transform;
+    transform: translateZ(0);
 }
 
 .glass-effect {
@@ -155,15 +195,53 @@ body.portal {
 }
 
 @supports (-webkit-touch-callout: none) {
-    body, .gradient-bg {
+    body, .gradient-bg, body.portal {
         min-height: -webkit-fill-available;
     }
     html {
         height: -webkit-fill-available;
     }
-    .gradient-bg {
+    .gradient-bg, body.portal {
         background-attachment: scroll;
     }
+}
+
+/* Mobile & coarse pointers: avoid fixed attachment quirks on Android/Brave */
+@media (max-width: 768px), (pointer: coarse) {
+    body.portal {
+        background-attachment: scroll !important;
+    }
+}
+
+/* Performance-safe mode for Android WebView or low-memory GPUs */
+.no-gpu-effects .gradient-bg {
+    background-attachment: scroll;
+    background: #0F172A;
+    min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
+}
+.no-gpu-effects .gradient-bg::before {
+    background: #0F172A;
+}
+.no-gpu-effects .glass-effect {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(0, 0, 0, 0.05);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+.no-gpu-effects .hover\:scale-105:hover {
+    transform: none;
+}
+.no-gpu-effects .shadow-2xl {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+.no-gpu-effects .loading-spinner {
+    animation: none;
+}
+.no-gpu-effects .transform {
+    transform: none;
 }
 
 /* --- Minimal Tailwind utility fallbacks for Captive Portal/Safari --- */
@@ -277,3 +355,21 @@ body.portal {
 
 /* Display helpers */
 .inline-block { display: inline-block; }
+
+/* --- Keyboard/webview scroll helpers --- */
+#main-content {
+    /* Use visual viewport if provided by JS; fallback to dvh */
+    min-height: var(--vvh, 100dvh);
+}
+
+/* When the soft keyboard is open, allow the content area to scroll and anchor to top */
+.keyboard-open #main-content {
+    justify-content: flex-start !important;
+    overflow-y: auto;
+    padding-bottom: calc(var(--kb-offset, 0px) + 16px);
+}
+
+/* Ensure inputs are not hidden under the keyboard; provide a small focus margin */
+.keyboard-open input, .keyboard-open button, .keyboard-open a {
+    scroll-margin: 72px;
+}

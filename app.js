@@ -1,377 +1,629 @@
-let isSignUpMode = false;
-const MAX_WAIT_MS = 15000; // hard cap to avoid indefinite loading
-function showLoading() { document.getElementById("loading-overlay").classList.remove("hidden"); }
-function hideLoading() { document.getElementById("loading-overlay").classList.add("hidden"); }
-function showAuthError(message) {
-    const el = document.getElementById("auth-error-message");
-    el.textContent = message;
-    el.classList.remove("hidden");
-    setTimeout(() => el.classList.add("hidden"), 5000);
-}
-function showAndroidBanner() {
-    // No-op: banner removed
-}
-function showCaptiveError(message) {
-    const el = document.getElementById("oper-hint");
-    el.textContent = message;
-    el.classList.remove("hidden");
-}
+/**
+ * Application configuration constants
+ */
+const APP_CONFIG = {
+    MAX_WAIT_MS: 15000,
+    HIDE_ERROR_DELAY: 5000
+};
 
-// Resolve siteId from path (/portal/entry/{controllerId}/{siteId}/{portalId}) or from query (?siteId=... or ?previewSite=...)
-function resolveSiteId() {
+let isSignUpMode = false;
+
+window.addEventListener('error', (e) => {
+    console.error('Global error:', e.error || e.message || e);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+    console.error('Unhandled promise rejection:', e.reason || e);
+});
+
+/**
+ * Optimizes rendering for Android WebView environments
+ */
+const optimizeForAndroidWebView = () => {
     try {
-        const usp = new URLSearchParams(window.location.search);
-        const qpSite = usp.get('siteId') || usp.get('previewSite');
-        if (qpSite) return qpSite;
-    } catch (_) { /* ignore */ }
-    try {
-        const segments = (window.location.pathname || '').split('?')[0].split('/').filter(Boolean);
-        let idx = -1;
-        for (let i = 1; i < segments.length; i++) {
-            if (segments[i] === 'entry' && segments[i - 1] === 'portal') { idx = i; break; }
+        const ua = navigator.userAgent.toLowerCase();
+        const isAndroid = ua.includes('android');
+        const isWebView = ua.includes('wv') || ua.includes('version/') || 
+                         (ua.includes('chrome/') && !ua.includes('safari/'));
+        
+        if (isAndroid && isWebView) {
+            document.documentElement.classList.add('no-gpu-effects');
         }
-        if (idx === -1) idx = segments.indexOf('entry');
-        if (idx !== -1) {
-            const siteId = segments[idx + 2];
-            if (siteId) return siteId;
-        }
-    } catch (_) { /* ignore */ }
-    return null;
-}
-function showCaptiveSection(user) {
-    document.getElementById("auth-section").style.display = "none";
-    document.getElementById("captive-section").style.display = "block";
-    document.getElementById("logged-user-email").textContent = user.email;
-    const step1 = document.getElementById("step1-indicator");
-    const step2 = document.getElementById("step2-indicator");
-    step1.classList.remove("bg-primary", "text-white");
-    step1.classList.add("bg-gray-200", "text-gray-600");
-    step2.classList.remove("bg-gray-200", "text-gray-600");
-    step2.classList.add("bg-primary", "text-white");
-    renderOrderListEmbedded();
-}
-function showAuthSection() {
-    document.getElementById("auth-section").style.display = "block";
-    document.getElementById("captive-section").style.display = "none";
-    const step1 = document.getElementById("step1-indicator");
-    const step2 = document.getElementById("step2-indicator");
-    step1.classList.remove("bg-gray-200", "text-gray-600");
-    step1.classList.add("bg-primary", "text-white");
-    step2.classList.remove("bg-primary", "text-white");
-    step2.classList.add("bg-gray-200", "text-gray-600");
-}
-function toggleAuthMode() {
-    isSignUpMode = !isSignUpMode;
-    const nameContainer = document.getElementById("auth-name-container");
-    const authTitle = document.getElementById("auth-title");
-    const authSubtitle = document.getElementById("auth-subtitle");
-    const authButton = document.getElementById("auth-button");
-    const toggleLink = document.getElementById("toggle-auth-mode");
-    const toggleText = document.getElementById("auth-toggle-text");
-    if (isSignUpMode) {
-        nameContainer.classList.remove("hidden");
-        authTitle.textContent = "Create Account";
-        authSubtitle.textContent = "Sign up to access the network";
-        authButton.textContent = "Sign Up";
-        toggleText.textContent = "Already have an account?";
-        toggleLink.textContent = "Sign in instead";
-    } else {
-        nameContainer.classList.add("hidden");
-        authTitle.textContent = "Welcome Back";
-        authSubtitle.textContent = "Please sign in with your account to continue";
-        authButton.textContent = "Sign In";
-        toggleText.textContent = "Don't have an account?";
-        toggleLink.textContent = "Sign up here";
+    } catch (error) {
+        console.error('Android WebView optimization failed:', error);
     }
-    document.getElementById("auth-error-message").classList.add("hidden");
-}
-function handleSignUp(name, email, password) {
-    showLoading();
-    // Safety timer to ensure we never spin forever
-    const timer = setTimeout(() => {
-        hideLoading();
-        showAuthError('Request is taking too long. Please check your connection and try again.');
-    }, MAX_WAIT_MS);
+};
+
+/**
+ * UI utility functions for managing interface states and notifications
+ */
+const UI = {
+    showLoading: () => document.getElementById("loading-overlay")?.classList.remove("hidden"),
+    hideLoading: () => document.getElementById("loading-overlay")?.classList.add("hidden"),
+    
+    /**
+     * Displays an error message in a specified element
+     * @param {string} elementId - The ID of the element to show the error in
+     * @param {string} message - The error message to display
+     * @param {boolean} autoHide - Whether to automatically hide the message after a delay
+     */
+    showError: (elementId, message, autoHide = true) => {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+        
+        element.textContent = message;
+        element.classList.remove("hidden");
+        
+        if (autoHide) {
+            setTimeout(() => element.classList.add("hidden"), APP_CONFIG.HIDE_ERROR_DELAY);
+        }
+    },
+    
+    showAuthError: (message) => UI.showError("auth-error-message", message),
+    showCaptiveError: (message) => UI.showError("oper-hint", message, false),
+    
+    /**
+     * Displays a configuration error and hides other UI sections
+     * @param {string} message - The error message to display
+     */
+    showConfigError: (message) => {
+        const errorMsg = message || 'Session invalid: Portal configuration is not supported for this portal.';
+        const elements = {
+            configError: document.getElementById('config-error'),
+            authSection: document.getElementById('auth-section'),
+            captiveSection: document.getElementById('captive-section'),
+            stepNav: document.getElementById('step-nav')
+        };
+        
+        if (elements.configError) {
+            elements.configError.textContent = errorMsg;
+            elements.configError.classList.remove('hidden');
+        }
+        
+        [elements.authSection, elements.captiveSection, elements.stepNav].forEach(el => {
+            if (el) el.style.display = 'none';
+        });
+    }
+};
+
+/**
+ * Resolves the site ID from the Omada portal path information
+ * @returns {string|null} The site ID or null if not found
+ */
+const resolveSiteId = () => {
     try {
-        Promise.resolve(window.altonautApi.signUp(name, email, password))
-        .then((result) => {
-            clearTimeout(timer);
+        return window.altonautApi?.getOmadaPathInfo?.()?.siteId || null;
+    } catch (error) {
+        console.error('Failed to resolve site ID:', error);
+        return null;
+    }
+};
+
+/**
+ * Manages application sections and step indicators
+ */
+const SectionManager = {
+    /**
+     * Updates the visual state of step indicators
+     * @param {number} activeStep - The step number to highlight (1 or 2)
+     */
+    updateStepIndicators: (activeStep) => {
+        const step1 = document.getElementById("step1-indicator");
+        const step2 = document.getElementById("step2-indicator");
+        
+        if (!step1 || !step2) return;
+        
+        const activeClasses = ["bg-primary", "text-white"];
+        const inactiveClasses = ["bg-gray-200", "text-gray-600"];
+        
+        [step1, step2].forEach(step => {
+            step.classList.remove(...activeClasses, ...inactiveClasses);
+        });
+        
+        if (activeStep === 1) {
+            step1.classList.add(...activeClasses);
+            step2.classList.add(...inactiveClasses);
+        } else {
+            step1.classList.add(...inactiveClasses);
+            step2.classList.add(...activeClasses);
+        }
+    },
+
+    /**
+     * Shows the captive portal section with user information
+     * @param {Object} user - User object containing email and other details
+     */
+    showCaptiveSection: (user) => {
+        const elements = {
+            authSection: document.getElementById("auth-section"),
+            captiveSection: document.getElementById("captive-section"),
+            userEmail: document.getElementById("logged-user-email")
+        };
+        
+        if (elements.authSection) elements.authSection.style.display = "none";
+        if (elements.captiveSection) elements.captiveSection.style.display = "block";
+        if (elements.userEmail) elements.userEmail.textContent = user.email;
+        
+        SectionManager.updateStepIndicators(2);
+        OrderManager.renderEmbedded();
+    },
+
+    /**
+     * Shows the authentication section
+     */
+    showAuthSection: () => {
+        const elements = {
+            authSection: document.getElementById("auth-section"),
+            captiveSection: document.getElementById("captive-section")
+        };
+        
+        if (elements.authSection) elements.authSection.style.display = "block";
+        if (elements.captiveSection) elements.captiveSection.style.display = "none";
+        
+        SectionManager.updateStepIndicators(1);
+    }
+};
+
+/**
+ * Handles user authentication operations
+ */
+const AuthManager = {
+    /**
+     * Creates a timeout handler for authentication requests
+     * @returns {Function} Cleanup function to clear the timeout
+     */
+    createTimeoutHandler: () => {
+        const timeoutId = setTimeout(() => {
+            UI.hideLoading();
+            UI.showAuthError('Request is taking too long. Please check your connection and try again.');
+        }, APP_CONFIG.MAX_WAIT_MS);
+        
+        return () => clearTimeout(timeoutId);
+    },
+
+    /**
+     * Handles authentication response and user session setup
+     * @param {Promise} authPromise - Promise that resolves to auth result
+     * @param {string} email - User's email address
+     * @param {Function} clearTimeout - Function to clear the timeout
+     */
+    async handleAuthResponse(authPromise, email, clearTimeout) {
+        try {
+            const result = await authPromise;
+            clearTimeout();
+            
             if (result.success && result.token) {
                 sessionStorage.setItem('authToken', result.token);
-                return window.altonautApi.getUser(result.token);
-            }
-            hideLoading();
-            let msg = result.error || "Registration failed. Please try again.";
-            if (result.error === "Email already registered.") msg = "This email is already registered. Please sign in instead.";
-            else if (result.error === "Invalid email format.") msg = "Invalid email address format.";
-            else if (result.error === "Password too weak.") msg = "Password is too weak. Please use at least 6 characters.";
-            showAuthError(msg);
-            return null;
-        })
-        .then((userResult) => {
-            if (!userResult) return; // prior step already handled error UI
-            hideLoading();
-            if (userResult.success) {
-                showCaptiveSection(userResult.user);
-            } else {
-                // Proceed with login despite user info fetch failure
-                showCaptiveSection({ email });
-                showCaptiveError(userResult.error || 'Could not fetch user info.');
-            }
-        })
-        .catch((error) => {
-            clearTimeout(timer);
-            hideLoading();
-            // Network failure on the sign-up request itself still blocks login
-            showAuthError("Registration failed. Please try again.");
-            if (error?.meta?.errorName === 'TypeError') showAndroidBanner();
-        });
-    } catch (err) {
-        clearTimeout(timer);
-        hideLoading();
-        showAuthError('Unexpected error starting request. Please try again.');
-        console.error('SignUp error:', err);
-    }
-}
-function handleSignIn(email, password) {
-    showLoading();
-    // Safety timer to ensure we never spin forever
-    const timer = setTimeout(() => {
-        hideLoading();
-        showAuthError('Request is taking too long. Please check your connection and try again.');
-    }, MAX_WAIT_MS);
-    try {
-        Promise.resolve(window.altonautApi.login(email, password))
-        .then((result) => {
-            clearTimeout(timer);
-            if (result.success && result.token) {
-                sessionStorage.setItem('authToken', result.token);
-                return window.altonautApi.getUser(result.token);
-            }
-            hideLoading();
-            let msg = result.error || "Authentication failed. Please try again.";
-            if (result.error === "Invalid email or password.") msg = "Invalid email or password. Please try again.";
-            showAuthError(msg);
-            return null;
-        })
-        .then((userResult) => {
-            if (!userResult) return; // prior step already handled error UI
-            hideLoading();
-            if (userResult.success) {
-                showCaptiveSection(userResult.user);
-            } else {
-                // Proceed with login despite user info fetch failure
-                showCaptiveSection({ email });
-                showCaptiveError(userResult.error || 'Could not fetch user info.');
-            }
-        })
-        .catch((error) => {
-            clearTimeout(timer);
-            hideLoading();
-            showAuthError("Authentication failed. Please try again.");
-            if (error?.meta?.errorName === 'TypeError') showAndroidBanner();
-        });
-    } catch (err) {
-        clearTimeout(timer);
-        hideLoading();
-        showAuthError('Unexpected error starting request. Please try again.');
-        console.error('SignIn error:', err);
-    }
-}
-function handleLogout() {
-    sessionStorage.removeItem('authToken');
-    document.getElementById("auth-form").reset();
-    document.getElementById("auth-error-message").classList.add("hidden");
-    showAuthSection();
-}
-function showOrderList() {
-    document.getElementById("order-list-section").classList.remove("hidden");
-    const orderList = document.getElementById("order-list");
-    orderList.innerHTML = "<div class='text-gray-500 text-center'>Loading...</div>";
-    const token = sessionStorage.getItem('authToken');
-    if (!token) {
-        orderList.innerHTML = "<div class='text-red-500 text-center'>Not authenticated.</div>";
-        return;
-    }
-    const siteId = resolveSiteId();
-    if (!siteId) {
-        orderList.innerHTML = "<div class='text-red-500 text-center'>Site not found. Please contact technical support.</div>";
-        return;
-    }
-    window.altonautApi.getOrders(token, siteId)
-        .then(result => {
-            if (result.success && Array.isArray(result.orders)) {
-                if (result.orders.length === 0) {
-                    orderList.innerHTML = "<div class='text-gray-500 text-center'>No orders found.</div>";
-                } else {
-                    orderList.innerHTML = "";
-                    result.orders.forEach(order => {
-                        const validUntil = order.validUntil ? new Date(order.validUntil) : null;
-                        const validText = validUntil ? validUntil.toLocaleString() : (order.validUntil || 'N/A');
-            const voucherDisplay = '';
-                        const card = document.createElement("div");
-                        card.className = "border rounded-lg p-4 shadow hover:bg-blue-100 cursor-pointer transition";
-                        card.innerHTML = `
-                            <div class=\"font-bold text-lg text-primary mb-1\">${order.packageName}</div>
-                            <div class=\"text-gray-700 mb-2\">${order.description || ''}</div>
-                            <div class=\"text-xs text-gray-500\">Valid Until (info): ${validText}</div>
-                            ${voucherDisplay ? `<div class=\"text-xs text-gray-400 mt-1\">Code: <span class=\"font-mono\">${voucherDisplay}</span></div>` : ''}
-                        `;
-                        card.onclick = () => { alert(`Selected: ${order.packageName}`); };
-                        orderList.appendChild(card);
-                    });
+                
+                try {
+                    const userResult = await window.altonautApi.getUser(result.token);
+                    UI.hideLoading();
+                    
+                    if (userResult.success) {
+                        SectionManager.showCaptiveSection(userResult.user);
+                    } else {
+                        SectionManager.showCaptiveSection({ email });
+                        UI.showCaptiveError(userResult.error || 'Could not fetch user info.');
+                    }
+                } catch (userError) {
+                    UI.hideLoading();
+                    SectionManager.showCaptiveSection({ email });
+                    UI.showCaptiveError('Could not fetch user info.');
+                    console.error('User info fetch failed:', userError);
                 }
             } else {
-                const msg = result?.error === 'Site not found. Please contact technical support.'
-                    ? 'Site not found. Please contact technical support.'
-                    : 'Error loading orders. Please try again later.';
-        orderList.innerHTML = `<div class='text-red-500 text-center'>${msg}</div>`;
+                UI.hideLoading();
+                const errorMessage = result.error || "Authentication failed. Please try again.";
+                UI.showAuthError(errorMessage);
             }
-        })
-        .catch(error => {
-            orderList.innerHTML = "<div class='text-red-500 text-center'>Error loading orders. Please try again later.</div>";
-        });
-}
-function renderOrderListEmbedded() {
-    const orderList = document.getElementById("order-list-embedded");
-    orderList.innerHTML = "<div class='text-gray-500 text-center'>Loading...</div>";
-    const token = sessionStorage.getItem('authToken');
-    if (!token) {
-        orderList.innerHTML = "<div class='text-red-500 text-center'>Not authenticated.</div>";
-        return;
-    }
-    const siteId = resolveSiteId();
-    if (!siteId) {
-        orderList.innerHTML = "<div class='text-red-500 text-center'>Site not found. Please contact technical support.</div>";
-        return;
-    }
-    window.altonautApi.getOrders(token, siteId)
-        .then(result => {
-            if (result.success && Array.isArray(result.orders)) {
-                if (result.orders.length === 0) {
-                    orderList.innerHTML = "<div class='text-gray-500 text-center'>No orders found.</div>";
-                } else {
-                    orderList.innerHTML = "";
-                    result.orders.forEach(order => {
-                        const validUntil = order.validUntil ? new Date(order.validUntil) : null;
-                        const validText = validUntil ? validUntil.toLocaleString() : (order.validUntil || 'N/A');
-            const voucherDisplay = '';
-                        const card = document.createElement("div");
-                        card.className = `border rounded-lg p-3 shadow-sm bg-white transition flex flex-col gap-1`;
-                        card.innerHTML = `
-                            <div class=\"font-semibold text-primary text-sm mb-0.5\">${order.packageName}</div>
-                            <div class=\"text-gray-700 text-xs\">${order.description || ''}</div>
-                            <div class=\"text-xs text-gray-400\">Valid Until (info): ${validText}</div>
-                            ${voucherDisplay ? `<div class=\"text-xs text-gray-400\">Code: <span class=\"font-mono\">${voucherDisplay}</span></div>` : ''}
-                            <button class=\"mt-1 w-full bg-primary hover:bg-primary-dark text-white rounded-md py-1.5 text-sm font-medium transition\">Use this package</button>
-                        `;
-                        card.querySelector('button').onclick = (e) => {
-                            e.stopPropagation();
-                            useOrderForVoucher(order);
-                        };
-                        orderList.appendChild(card);
-                    });
-                }
-            } else {
-                const msg = result?.error === 'Site not found. Please contact technical support.'
-                    ? 'Site not found. Please contact technical support.'
-                    : 'Error loading orders. Please try again later.';
-        orderList.innerHTML = `<div class='text-red-500 text-center'>${msg}</div>`;
-            }
-        })
-        .catch(error => {
-            orderList.innerHTML = "<div class='text-red-500 text-center'>Error loading orders. Please try again later.</div>";
-        });
-}
-function useOrderForVoucher(order) {
-    const voucher = order?.voucherCode || order?.voucher || order?.code;
-    if (!voucher) {
-        showCaptiveError('Selected order has no voucher code. Please contact support.');
-        return;
-    }
-    if (typeof window.submitVoucherAuth !== 'function') {
-        showCaptiveError('Voucher authentication is not available. Please contact support.');
-        return;
-    }
-    const onStart = () => {
-        showLoading();
-        const success = document.getElementById('captive-success-message');
-        if (success) success.classList.add('hidden');
-    };
-    const onSuccess = () => {
-        const success = document.getElementById('captive-success-message');
-        if (success) {
-            success.textContent = 'Authentication successful! Redirecting...';
-            success.classList.remove('hidden');
+        } catch (error) {
+            clearTimeout();
+            UI.hideLoading();
+            UI.showAuthError("Authentication failed. Please try again.");
+            console.error('Authentication error:', error);
         }
-    };
-    const onError = (message, raw) => {
-    showCaptiveError(message || 'Failed to authenticate with voucher.');
-    };
-    const onDone = () => hideLoading();
-    window.submitVoucherAuth(voucher, { onStart, onSuccess, onError, onDone });
-}
-function setupEventListeners() {
-    document.getElementById("toggle-auth-mode").addEventListener("click", (e) => {
-        e.preventDefault();
-        toggleAuthMode();
-    });
-    document.getElementById("auth-form").addEventListener("submit", (e) => {
-        e.preventDefault();
-        const email = document.getElementById("auth-email").value;
-        const password = document.getElementById("auth-password").value;
-        if (!email || !password) {
-            showAuthError("Please enter both email and password");
+    },
+
+    /**
+     * Handles user sign up process
+     * @param {string} name - User's full name
+     * @param {string} email - User's email address
+     * @param {string} password - User's password
+     */
+    async signUp(name, email, password) {
+        UI.showLoading();
+        const clearTimeout = AuthManager.createTimeoutHandler();
+        const authPromise = window.altonautApi.signUp(name, email, password);
+        await AuthManager.handleAuthResponse(authPromise, email, clearTimeout);
+    },
+
+    /**
+     * Handles user sign in process
+     * @param {string} email - User's email address
+     * @param {string} password - User's password
+     */
+    async signIn(email, password) {
+        UI.showLoading();
+        const clearTimeout = AuthManager.createTimeoutHandler();
+        const authPromise = window.altonautApi.login(email, password);
+        await AuthManager.handleAuthResponse(authPromise, email, clearTimeout);
+    },
+
+    /**
+     * Logs out the current user and resets the interface
+     */
+    logout() {
+        sessionStorage.removeItem('authToken');
+        document.getElementById("auth-form")?.reset();
+        document.getElementById("auth-error-message")?.classList.add("hidden");
+        SectionManager.showAuthSection();
+    },
+
+    /**
+     * Toggles between sign in and sign up modes
+     */
+    toggleMode() {
+        isSignUpMode = !isSignUpMode;
+        
+        const elements = {
+            nameContainer: document.getElementById("auth-name-container"),
+            title: document.getElementById("auth-title"),
+            subtitle: document.getElementById("auth-subtitle"),
+            button: document.getElementById("auth-button"),
+            toggleLink: document.getElementById("toggle-auth-mode"),
+            toggleText: document.getElementById("auth-toggle-text"),
+            errorMessage: document.getElementById("auth-error-message")
+        };
+        
+        const config = isSignUpMode ? {
+            nameVisible: true,
+            title: "Create Account",
+            subtitle: "Sign up to access the network",
+            button: "Sign Up",
+            toggleText: "Already have an account?",
+            toggleLink: "Sign in instead"
+        } : {
+            nameVisible: false,
+            title: "Welcome Back",
+            subtitle: "Please sign in with your account to continue",
+            button: "Sign In",
+            toggleText: "Don't have an account?",
+            toggleLink: "Sign up here"
+        };
+        
+        if (elements.nameContainer) {
+            elements.nameContainer.classList.toggle("hidden", !config.nameVisible);
+        }
+        if (elements.title) elements.title.textContent = config.title;
+        if (elements.subtitle) elements.subtitle.textContent = config.subtitle;
+        if (elements.button) elements.button.textContent = config.button;
+        if (elements.toggleText) elements.toggleText.textContent = config.toggleText;
+        if (elements.toggleLink) elements.toggleLink.textContent = config.toggleLink;
+        
+        elements.errorMessage?.classList.add("hidden");
+    }
+};
+
+/**
+ * Manages order display and interaction
+ */
+const OrderManager = {
+    /**
+     * Fetches orders from API and renders them in the specified container
+     * @param {HTMLElement} containerElement - Container to render orders in
+     * @param {boolean} isEmbedded - Whether this is embedded in the main flow
+     */
+    async fetchAndRender(containerElement, isEmbedded = false) {
+        if (!containerElement) return;
+        
+        containerElement.innerHTML = "<div class='text-gray-500 text-center'>Loading...</div>";
+        
+        const token = sessionStorage.getItem('authToken');
+        if (!token) {
+            containerElement.innerHTML = "<div class='text-red-500 text-center'>Not authenticated.</div>";
             return;
         }
-        if (isSignUpMode) {
-            const name = document.getElementById("auth-name").value;
-            if (!name) {
-                showAuthError("Please enter your name");
+        
+        const siteId = resolveSiteId();
+        if (!siteId) {
+            containerElement.innerHTML = "<div class='text-red-500 text-center'>Site not found. Please contact technical support.</div>";
+            return;
+        }
+        
+        try {
+            const result = await window.altonautApi.getOrders(token, siteId);
+            
+            if (result.success && Array.isArray(result.orders)) {
+                if (result.orders.length === 0) {
+                    containerElement.innerHTML = "<div class='text-gray-500 text-center'>No orders found.</div>";
+                } else {
+                    containerElement.innerHTML = "";
+                    result.orders.forEach(order => {
+                        const orderCard = OrderManager.createOrderCard(order, isEmbedded);
+                        containerElement.appendChild(orderCard);
+                    });
+                }
+            } else {
+                const errorMsg = result?.error === 'Site not found. Please contact technical support.'
+                    ? 'Site not found. Please contact technical support.'
+                    : 'Error loading orders. Please try again later.';
+                containerElement.innerHTML = `<div class='text-red-500 text-center'>${errorMsg}</div>`;
+            }
+        } catch (error) {
+            containerElement.innerHTML = "<div class='text-red-500 text-center'>Error loading orders. Please try again later.</div>";
+            console.error('Error fetching orders:', error);
+        }
+    },
+    
+    /**
+     * Creates a DOM element for displaying an order
+     * @param {Object} order - Order data object
+     * @param {boolean} isEmbedded - Whether this card is in embedded mode
+     * @returns {HTMLElement} The created order card element
+     */
+    createOrderCard(order, isEmbedded = false) {
+        const validUntil = order.validUntil ? new Date(order.validUntil) : null;
+        const validText = validUntil ? validUntil.toLocaleString() : (order.validUntil || 'N/A');
+        
+        const card = document.createElement("div");
+        card.className = "border rounded-lg p-4 shadow hover:bg-blue-100 cursor-pointer transition";
+        
+        card.innerHTML = `
+            <div class="font-bold text-lg text-primary mb-1">${order.packageName || 'Unknown Package'}</div>
+            <div class="text-gray-700 mb-2">${order.description || ''}</div>
+            <div class="text-xs text-gray-500">Valid Until: ${validText}</div>
+            <div class="text-xs text-gray-500">Speed: ${order.speed || 'N/A'}</div>
+        `;
+        
+        if (isEmbedded) {
+            card.addEventListener('click', () => VoucherManager.useOrder(order));
+        }
+        
+        return card;
+    },
+
+    /**
+     * Shows the order list modal
+     */
+    showModal() {
+        document.getElementById("order-list-section")?.classList.remove("hidden");
+        const orderList = document.getElementById("order-list");
+        OrderManager.fetchAndRender(orderList, false);
+    },
+
+    /**
+     * Renders the embedded order list in the captive portal section
+     */
+    renderEmbedded() {
+        const orderList = document.getElementById("order-list-embedded");
+        OrderManager.fetchAndRender(orderList, true);
+    }
+};
+
+/**
+ * Handles voucher authentication operations
+ */
+const VoucherManager = {
+    /**
+     * Uses an order's voucher code for authentication
+     * @param {Object} order - Order object containing voucher information
+     */
+    useOrder(order) {
+        const voucher = order?.voucherCode || order?.voucher || order?.code;
+        if (!voucher) {
+            UI.showCaptiveError('Selected order has no voucher code. Please contact support.');
+            return;
+        }
+        
+        if (typeof window.submitVoucherAuth !== 'function') {
+            UI.showCaptiveError('Voucher authentication is not available. Please contact support.');
+            return;
+        }
+        
+        const callbacks = {
+            onStart: () => {
+                UI.showLoading();
+                const success = document.getElementById('captive-success-message');
+                if (success) success.classList.add('hidden');
+            },
+            onSuccess: () => {
+                const success = document.getElementById('captive-success-message');
+                if (success) {
+                    success.textContent = 'Authentication successful! Redirecting...';
+                    success.classList.remove('hidden');
+                }
+            },
+            onError: (message) => {
+                UI.showCaptiveError(message || 'Failed to authenticate with voucher.');
+            },
+            onDone: () => UI.hideLoading()
+        };
+        
+        window.submitVoucherAuth(voucher, callbacks);
+    }
+};
+
+/**
+ * Sets up and manages DOM event listeners
+ */
+const EventManager = {
+    /**
+     * Initializes all event listeners for the application
+     */
+    setup() {
+        document.getElementById("toggle-auth-mode")?.addEventListener("click", (e) => {
+            e.preventDefault();
+            AuthManager.toggleMode();
+        });
+        
+        document.getElementById("auth-form")?.addEventListener("submit", (e) => {
+            e.preventDefault();
+            const email = document.getElementById("auth-email")?.value;
+            const password = document.getElementById("auth-password")?.value;
+            
+            if (!email || !password) {
+                UI.showAuthError("Please enter both email and password");
                 return;
             }
-            handleSignUp(name, email, password);
-        } else {
-            handleSignIn(email, password);
+            
+            if (isSignUpMode) {
+                const name = document.getElementById("auth-name")?.value;
+                if (!name) {
+                    UI.showAuthError("Please enter your name");
+                    return;
+                }
+                AuthManager.signUp(name, email, password);
+            } else {
+                AuthManager.signIn(email, password);
+            }
+        });
+        
+        document.getElementById("logout-link")?.addEventListener("click", (e) => {
+            e.preventDefault();
+            AuthManager.logout();
+        });
+        
+        ["auth-name", "auth-email", "auth-password"].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.addEventListener("input", () => {
+                    document.getElementById("auth-error-message")?.classList.add("hidden");
+                });
+            }
+        });
+        
+        document.getElementById("close-order-list")?.addEventListener("click", () => {
+            document.getElementById("order-list-section")?.classList.add("hidden");
+        });
+        
+        document.getElementById("form-auth-close")?.addEventListener("click", () => {
+            document.getElementById("form-auth-msg")?.classList.add("hidden");
+        });
+    }
+};
+
+/**
+ * Manages keyboard behavior and viewport adjustments for mobile devices
+ */
+const KeyboardManager = {
+    /**
+     * Sets up keyboard and viewport management for mobile devices
+     */
+    setup() {
+        try {
+            const visualViewport = window.visualViewport;
+            const root = document.documentElement;
+            const body = document.body;
+            
+            const handleViewportChange = () => {
+                if (!visualViewport) return;
+                
+                root.style.setProperty('--vvh', visualViewport.height + 'px');
+                const keyboardOffset = Math.max(0, window.innerHeight - visualViewport.height);
+                root.style.setProperty('--kb-offset', keyboardOffset + 'px');
+                
+                body.classList.toggle('keyboard-open', keyboardOffset > 60);
+            };
+            
+            if (visualViewport) {
+                ['resize', 'scroll'].forEach(event => {
+                    visualViewport.addEventListener(event, handleViewportChange);
+                });
+                window.addEventListener('resize', handleViewportChange);
+                handleViewportChange();
+            }
+            
+            const ensureInputVisible = (event) => {
+                const element = event.target;
+                if (!(element instanceof HTMLElement)) return;
+                
+                setTimeout(() => {
+                    try {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } catch (error) {
+                        console.error('Scroll into view failed:', error);
+                    }
+                }, 100);
+            };
+            
+            ['focus', 'click'].forEach(type => {
+                ['auth-email', 'auth-password', 'auth-name'].forEach(id => {
+                    document.getElementById(id)?.addEventListener(type, ensureInputVisible);
+                });
+            });
+        } catch (error) {
+            console.error('Keyboard manager setup failed:', error);
         }
+    }
+};
+
+/**
+ * Manages modal creation and initialization
+ */
+const ModalManager = {
+    /**
+     * Creates and initializes the order list modal
+     */
+    initializeOrderListModal() {
+        const modal = document.createElement('div');
+        modal.id = "order-list-section";
+        modal.className = "hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4";
+        modal.setAttribute('role', 'dialog');
+        modal.setAttribute('aria-modal', 'true');
+        modal.setAttribute('aria-labelledby', 'order-list-title');
+        
+        modal.innerHTML = `
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-6">
+                <h2 id="order-list-title" class="text-xl font-bold mb-4 text-gray-900">Your Orders</h2>
+                <div id="order-list" class="space-y-4"></div>
+                <button id="close-order-list" class="mt-6 w-full bg-primary hover:bg-primary-dark text-white font-semibold py-2 px-4 rounded-lg">Close</button>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    }
+};
+
+/**
+ * Main application controller
+ */
+const App = {
+    /**
+     * Initializes the entire application
+     */
+    async initialize() {
+        optimizeForAndroidWebView();
+        ModalManager.initializeOrderListModal();
+        EventManager.setup();
+        KeyboardManager.setup();
+        
+        try {
+            const portalSettings = window.__portalSettingsReady instanceof Promise
+                ? window.__portalSettingsReady
+                : Promise.resolve();
+                
+            await portalSettings;
+            
+            if (window.__portalBlockAccess) {
+                UI.showConfigError('Session invalid: Voucher access is not enabled for this portal.');
+                return;
+            }
+            
+            SectionManager.showAuthSection();
+        } catch (error) {
+            console.error('Portal settings initialization failed:', error);
+            SectionManager.showAuthSection();
+        }
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+    App.initialize().catch(error => {
+        console.error('App initialization failed:', error);
     });
-    document.getElementById("logout-link").addEventListener("click", (e) => {
-        e.preventDefault();
-        handleLogout();
-    });
-    ["auth-name", "auth-email", "auth-password"].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener("input", () => document.getElementById("auth-error-message").classList.add("hidden"));
-    });
-    document.getElementById("close-order-list").addEventListener("click", () => {
-        document.getElementById("order-list-section").classList.add("hidden");
-    });
-    document.getElementById("form-auth-close").addEventListener("click", () => {
-        document.getElementById("form-auth-msg").classList.add("hidden");
-    });
-}
-function initializeOrderListModal() {
-    const orderListModal = document.createElement('div');
-    orderListModal.id = "order-list-section";
-    orderListModal.className = "hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4";
-    orderListModal.setAttribute('role', 'dialog');
-    orderListModal.setAttribute('aria-modal', 'true');
-    orderListModal.setAttribute('aria-labelledby', 'order-list-title');
-    orderListModal.innerHTML = `
-        <div class=\"bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto p-6\">
-            <h2 id=\"order-list-title\" class=\"text-xl font-bold mb-4 text-gray-900\">Your Orders</h2>
-            <div id=\"order-list\" class=\"space-y-4\"></div>
-            <button id=\"close-order-list\" class=\"mt-6 w-full bg-primary hover:bg-primary-dark text-white font-semibold py-2 px-4 rounded-lg\">Close</button>
-        </div>
-    `;
-    document.body.appendChild(orderListModal);
-}
-function initializeApp() {
-    initializeOrderListModal();
-    setupEventListeners();
-    showAuthSection();
-    const api = window.altonautApi;
-}
-document.addEventListener('DOMContentLoaded', initializeApp);
-window.showCaptiveError = showCaptiveError;
-window.useOrderForVoucher = useOrderForVoucher;
+});
+
+window.showCaptiveError = UI.showCaptiveError;
+window.useOrderForVoucher = VoucherManager.useOrder;
+window.showConfigError = UI.showConfigError;
+window.resolveSiteId = resolveSiteId;

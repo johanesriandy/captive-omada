@@ -1,19 +1,23 @@
+// Constants and configuration
 const AUTH_TYPES = {
     NO_AUTH: 0,
     SIMPLE_PASSWORD: 1,
     EXTERNAL_RADIUS: 2,
-    HOTSPOT: 11,
-    EXTERNAL_LDAP: 15,
     VOUCHER_ACCESS_TYPE: 3,
     LOCAL_USER_ACCESS_TYPE: 5,
     SMS_ACCESS_TYPE: 6,
     RADIUS_ACCESS_TYPE: 8,
-    FORM_AUTH_ACCESS_TYPE: 12
+    HOTSPOT: 11,
+    FORM_AUTH_ACCESS_TYPE: 12,
+    EXTERNAL_LDAP: 15
 };
 
-const MAX_INPUT_LEN = 2000;
+const CONFIG = {
+    MAX_INPUT_LENGTH: 2000,
+    AJAX_TIMEOUT: 15000
+};
 
-const errorHintMap = {
+const ERROR_MESSAGES = {
     "0": "ok",
     "-1": "General error.",
     "-41500": "Invalid authentication type.",
@@ -52,152 +56,208 @@ const errorHintMap = {
     "-41538": "Voucher is not effective."
 };
 
+// Improved Ajax utility with modern fetch-like interface
 const Ajax = {
-    post: (url, data, callback) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", url, true);
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.timeout = 15000;
-        const finish = (statusOk) => {
-            let parsed;
-            let raw = xhr.responseText;
-            try {
-                parsed = typeof raw === 'string' && raw.length ? JSON.parse(raw) : (raw || {});
-            } catch (e) {
-                parsed = { error: 'parse_error', message: 'Non-JSON response', rawText: raw };
-            }
-            callback({
-                ok: statusOk,
-                httpStatus: xhr.status,
-                statusText: xhr.statusText,
-                result: parsed,
-                rawText: raw
-            });
-        };
-        xhr.onreadystatechange = () => {
-            if (xhr.readyState === 4) {
-                if (xhr.status === 200 || xhr.status === 304) finish(true);
-                else finish(false);
-            }
-        };
-        xhr.onerror = () => {
-            callback({ ok: false, httpStatus: xhr.status, statusText: xhr.statusText, result: { error: 'network_error' } });
-        };
-        xhr.ontimeout = () => {
-            callback({ ok: false, httpStatus: xhr.status, statusText: 'Timeout', result: { error: 'timeout' } });
-        };
-        xhr.send(data);
-    }
-};
-
-// Hotspot type labels expected by UI population
-const hotspotMap = {
-    [AUTH_TYPES.VOUCHER_ACCESS_TYPE]: "Voucher Access",
-    [AUTH_TYPES.LOCAL_USER_ACCESS_TYPE]: "Local User Access",
-    [AUTH_TYPES.SMS_ACCESS_TYPE]: "SMS Access",
-    [AUTH_TYPES.RADIUS_ACCESS_TYPE]: "RADIUS Access",
-    [AUTH_TYPES.FORM_AUTH_ACCESS_TYPE]: "Form Auth Access"
-};
-
-// Safe DOM utils to avoid null reference errors in customized templates
-function safeById(id) {
-    return document.getElementById(id) || null;
-}
-function safeShow(id, display = 'block') {
-    const el = safeById(id);
-    if (el && el.style) el.style.display = display;
-}
-function safeHide(id) {
-    const el = safeById(id);
-    if (el && el.style) el.style.display = 'none';
-}
-
-const getQueryStringKey = (key) => getQueryStringAsObject()[key];
-
-const getQueryStringAsObject = () => {
-    const params = {};
-    try {
-        const usp = new URLSearchParams(window.location.search);
-        for (const [k, v] of usp.entries()) {
-            if (params[k]) {
-                if (!Array.isArray(params[k])) params[k] = [params[k]];
-                params[k].push(v);
-            } else {
-                params[k] = v;
-            }
-        }
-    } catch (_) {
-        // Fallback parser without decoding entire string first
-        const raw = (window.location.search || '').replace(/^\?/, '');
-        raw.split('&').forEach(pair => {
-            if (!pair) return;
-            const [k, v] = pair.split('=');
-            const key = decodeURIComponent(k || '');
-            const val = decodeURIComponent(v || '');
-            if (params[key]) {
-                if (!Array.isArray(params[key])) params[key] = [params[key]];
-                params[key].push(val);
-            } else {
-                params[key] = val;
-            }
+    async post(url, data) {
+        return new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", url, true);
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.timeout = CONFIG.AJAX_TIMEOUT;
+            
+            const handleResponse = (ok) => {
+                let parsed;
+                const raw = xhr.responseText;
+                
+                try {
+                    parsed = raw && raw.length ? JSON.parse(raw) : {};
+                } catch (error) {
+                    parsed = { 
+                        error: 'parse_error', 
+                        message: 'Non-JSON response', 
+                        rawText: raw 
+                    };
+                }
+                
+                resolve({
+                    ok,
+                    httpStatus: xhr.status,
+                    statusText: xhr.statusText,
+                    result: parsed,
+                    rawText: raw
+                });
+            };
+            
+            xhr.onreadystatechange = () => {
+                if (xhr.readyState === 4) {
+                    handleResponse(xhr.status === 200 || xhr.status === 304);
+                }
+            };
+            
+            xhr.onerror = () => {
+                resolve({ 
+                    ok: false, 
+                    httpStatus: xhr.status, 
+                    statusText: xhr.statusText, 
+                    result: { error: 'network_error' } 
+                });
+            };
+            
+            xhr.ontimeout = () => {
+                resolve({ 
+                    ok: false, 
+                    httpStatus: xhr.status, 
+                    statusText: 'Timeout', 
+                    result: { error: 'timeout' } 
+                });
+            };
+            
+            xhr.send(data);
         });
     }
-    return params;
 };
 
-const clientMac = getQueryStringKey("clientMac");
-const apMac = getQueryStringKey("apMac");
-const gatewayMac = getQueryStringKey("gatewayMac") || undefined;
-const ssidName = getQueryStringKey("ssidName") || undefined;
-const radioId = getQueryStringKey("radioId") ? Number(getQueryStringKey("radioId")) : undefined;
-const vid = getQueryStringKey("vid") ? Number(getQueryStringKey("vid")) : undefined;
-const originUrl = getQueryStringKey("originUrl");
-const previewSite = getQueryStringKey("previewSite");
+// Utility functions
+const DOM = {
+    safeById: (id) => document.getElementById(id) || null,
+    
+    safeShow: (id, display = 'block') => {
+        const el = DOM.safeById(id);
+        if (el?.style) el.style.display = display;
+    },
+    
+    safeHide: (id) => {
+        const el = DOM.safeById(id);
+        if (el?.style) el.style.display = 'none';
+    }
+};
 
+const URLUtils = {
+    getQueryParams: () => {
+        const params = {};
+        try {
+            const usp = new URLSearchParams(window.location.search);
+            for (const [key, value] of usp.entries()) {
+                if (params[key]) {
+                    if (!Array.isArray(params[key])) params[key] = [params[key]];
+                    params[key].push(value);
+                } else {
+                    params[key] = value;
+                }
+            }
+        } catch (error) {
+            console.error('URLSearchParams error:', error);
+            // Fallback for older browsers
+            const raw = window.location.search.replace(/^\?/, '');
+            raw.split('&').forEach(pair => {
+                if (!pair) return;
+                const [k, v] = pair.split('=');
+                const key = decodeURIComponent(k || '');
+                const val = decodeURIComponent(v || '');
+                if (params[key]) {
+                    if (!Array.isArray(params[key])) params[key] = [params[key]];
+                    params[key].push(val);
+                } else {
+                    params[key] = val;
+                }
+            });
+        }
+        return params;
+    },
+    
+    getParam: (key) => URLUtils.getQueryParams()[key]
+};
+
+// Extract URL parameters
+const urlParams = URLUtils.getQueryParams();
+const clientMac = urlParams.clientMac;
+const apMac = urlParams.apMac;
+const gatewayMac = urlParams.gatewayMac;
+const ssidName = urlParams.ssidName;
+const radioId = urlParams.radioId ? Number(urlParams.radioId) : undefined;
+const vid = urlParams.vid ? Number(urlParams.vid) : undefined;
+const originUrl = urlParams.originUrl;
+const previewSite = urlParams.previewSite;
+
+// Global state
 let isCommitted = false;
 let globalConfig = {};
-let submitUrl;
 
-const handleAjaxResponse = (response) => {
-    const data = response?.result || {};
-    submitUrl = "/portal/auth";
+// Portal settings readiness promise
+let __resolvePortalSettings;
+window.__portalSettingsReady = new Promise((resolve) => { 
+    __resolvePortalSettings = resolve; 
+});
+
+// Portal configuration handler
+const handlePortalResponse = (response) => {
+    const payload = response?.result || {};
+    const data = payload?.result || {};
     const landingUrl = data.landingUrl;
 
     globalConfig = {
         authType: AUTH_TYPES.VOUCHER_ACCESS_TYPE,
-        hotspotTypes: [AUTH_TYPES.VOUCHER_ACCESS_TYPE],
+        hotspotTypes: data.hotspot?.enabledTypes || [],
         buttonText: data.portalCustomize?.buttonText || 'Log In',
         formAuthButtonText: data.portalCustomize?.formAuthButtonText || 'Take the Survey',
         formAuth: data.formAuth || {},
-        error: data.error || 'ok',
+        error: payload.errorCode === 0 ? 'ok' : (payload.msg || 'error'),
         countryCode: `+${data.sms?.countryCode || 1}`,
         landingUrl
     };
 
-    configurePage(globalConfig);
+    DOM.safeHide("oper-hint");
+
+    // Validate Voucher access availability
+    const voucherEnabled = Array.isArray(globalConfig.hotspotTypes) &&
+        globalConfig.hotspotTypes.includes(AUTH_TYPES.VOUCHER_ACCESS_TYPE);
+    
+    window.__portalBlockAccess = !voucherEnabled;
+    
+    if (!voucherEnabled) {
+        const errorMessage = 'Session invalid: Portal configuration does not allow Voucher access for this SSID/site.';
+        
+        if (typeof window.showConfigError === 'function') {
+            try { 
+                window.showConfigError(errorMessage); 
+            } catch (error) {
+                console.error('Failed to show config error:', error);
+            }
+        } else {
+            // Fallback DOM operations
+            try {
+                const authSection = document.getElementById('auth-section');
+                const captiveSection = document.getElementById('captive-section');
+                const configError = document.getElementById('config-error');
+                
+                if (authSection) authSection.style.display = 'none';
+                if (captiveSection) captiveSection.style.display = 'none';
+                if (configError) {
+                    configError.textContent = errorMessage;
+                    configError.classList.remove('hidden');
+                }
+            } catch (error) {
+                console.error('Fallback config error display failed:', error);
+            }
+        }
+    }
+
+    // Signal readiness regardless of validity
+    if (typeof __resolvePortalSettings === 'function') {
+        __resolvePortalSettings(globalConfig);
+    }
 };
 
-const configurePage = (config) => {
-    safeHide("oper-hint");
-    safeHide("hotspot-section");
-    safeHide("input-voucher");
-    safeHide("input-user");
-    safeHide("input-password");
-    safeHide("input-simple");
-    safeHide("input-phone-num");
-    safeHide("input-verify-code");
-
-    // Always enforce voucher as selected/only method
-    window.authType = AUTH_TYPES.VOUCHER_ACCESS_TYPE;
-};
-
-// Expose a helper to submit voucher auth to Omada controller
-window.submitVoucherAuth = function submitVoucherAuth(voucherCode, callbacks = {}) {
+// Enhanced voucher authentication with better error handling
+window.submitVoucherAuth = async function submitVoucherAuth(voucherCode, callbacks = {}) {
     const { onStart, onSuccess, onError, onDone } = callbacks;
+    
+    // Validation
     if (!voucherCode || typeof voucherCode !== 'string') {
         onError && onError('Invalid voucher code.');
         return;
     }
+    
     if (onStart) onStart();
 
     const payload = JSON.stringify({
@@ -209,55 +269,68 @@ window.submitVoucherAuth = function submitVoucherAuth(voucherCode, callbacks = {
         vid,
         originUrl,
         authType: AUTH_TYPES.VOUCHER_ACCESS_TYPE,
-        voucherCode: voucherCode.trim().slice(0, MAX_INPUT_LEN)
+        voucherCode: voucherCode.trim().slice(0, CONFIG.MAX_INPUT_LENGTH)
     });
 
-    Ajax.post(submitUrl || '/portal/auth', payload, (resp) => {
-        try {
-            const httpStatus = resp?.httpStatus;
-            const statusText = resp?.statusText;
-            const result = resp?.result || {};
-            // Omada responses vary; treat 0 or 'ok' as success
-            const code = result.errCode ?? result.errorCode ?? result.code;
-            const primaryMsg = result.error || result.message || result.msg;
-            const msgKey = String(code ?? (primaryMsg === 'ok' ? 0 : -1));
-            const ok = (code === 0) || (primaryMsg === 'ok');
-            if (ok) {
-                onSuccess && onSuccess(result);
-                // Try to redirect if a landing URL is provided
-                const urlFromResult = typeof result.result === 'string' ? result.result : undefined;
-                const url = urlFromResult || result.landingUrl || globalConfig.landingUrl || originUrl;
-                if (url) {
-                    try { window.location.replace(url); } catch (_) { window.location.href = url; }
+    try {
+        const response = await Ajax.post('/portal/auth', payload);
+        const result = response?.result || {};
+        
+        // Extract error code and message
+        const errorCode = result.errCode ?? result.errorCode ?? result.code;
+        const primaryMsg = result.error || result.message || result.msg;
+        const isSuccess = (errorCode === 0) || (primaryMsg === 'ok');
+        
+        if (isSuccess) {
+            onSuccess && onSuccess(result);
+            
+            // Handle redirect
+            const redirectUrl = (typeof result.result === 'string' ? result.result : undefined) ||
+                               result.landingUrl || 
+                               globalConfig.landingUrl || 
+                               originUrl;
+            
+            if (redirectUrl) {
+                try { 
+                    window.location.replace(redirectUrl); 
+                } catch (error) { 
+                    console.error('Redirect failed, using fallback:', error);
+                    window.location.href = redirectUrl; 
                 }
-            } else {
-        // Provide concise guidance when voucher auth is misconfigured on the controller
-                const numeric = Number(code);
-                const misconfigCodes = new Set([-41500, -41533, -41538]);
-                const fallback = errorHintMap[msgKey] || primaryMsg || 'Failed to authenticate.';
-                let human = misconfigCodes.has(numeric)
-                    ? 'Voucher authentication failed on the controller. Please verify that Voucher is enabled and configured for this SSID/site.'
-                    : fallback;
-                // Additional environment-specific hints can be added here.
-        onError && onError(human, result);
-                const hint = safeById('oper-hint');
-                if (hint) {
-                    let full = human;
-                    if (code !== undefined) full += ` (code ${code})`;
-                    hint.textContent = full;
-                    hint.style.display = 'block';
-                }
-                
             }
-        } finally {
-            onDone && onDone();
+        } else {
+            // Handle authentication errors
+            const numericCode = Number(errorCode);
+            const misconfigCodes = new Set([-41500, -41533, -41538]);
+            const errorKey = String(errorCode ?? (primaryMsg === 'ok' ? 0 : -1));
+            const fallbackMessage = ERROR_MESSAGES[errorKey] || primaryMsg || 'Failed to authenticate.';
+            
+            const humanMessage = misconfigCodes.has(numericCode)
+                ? 'Voucher authentication failed on the controller. Please verify that Voucher is enabled and configured for this SSID/site.'
+                : fallbackMessage;
+            
+            onError && onError(humanMessage, result);
+            
+            // Update UI hint
+            const hintElement = DOM.safeById('oper-hint');
+            if (hintElement) {
+                let fullMessage = humanMessage;
+                if (errorCode !== undefined) fullMessage += ` (code ${errorCode})`;
+                hintElement.textContent = fullMessage;
+                hintElement.style.display = 'block';
+            }
         }
-    });
+    } catch (error) {
+        console.error('Voucher authentication error:', error);
+        onError && onError('Network error occurred. Please try again.', { error: error.message });
+    } finally {
+        onDone && onDone();
+    }
 };
 
-Ajax.post(
-    '/portal/getPortalPageSetting',
-    JSON.stringify({
+// Initialize portal settings
+(async function initializePortal() {
+    const payload = JSON.stringify({
         clientMac,
         apMac,
         gatewayMac,
@@ -265,6 +338,16 @@ Ajax.post(
         radioId,
         vid,
         originUrl
-    }),
-    handleAjaxResponse
-);
+    });
+
+    try {
+        const response = await Ajax.post('/portal/getPortalPageSetting', payload);
+        handlePortalResponse(response);
+    } catch (error) {
+        console.error('Failed to fetch portal settings:', error);
+        // Signal readiness even on failure so UI can proceed
+        if (typeof __resolvePortalSettings === 'function') {
+            __resolvePortalSettings({ error: 'Failed to load portal settings' });
+        }
+    }
+})();
